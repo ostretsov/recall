@@ -41,15 +41,19 @@ the app menu. The first time, press **Download** to get the speech models
    grey italic line is still being recognized.
 3. Press **■ Stop**. The accurate transcript is made in the background;
    **Open folder** (the call's folder: transcript and recordings) appears
-   when it's ready. The folder button in the title bar opens all the
-   recordings.
+   when it's ready.
 
 While recall runs, its icon is in the top bar (Ubuntu's AppIndicator
 extension, on by default): click it to show the window; its menu starts or
-stops recording and quits. The icon turns red while recording.
+stops recording and quits. The icon turns red while recording. Closing the
+window only hides it: recall keeps running (recording, transcripts, the
+shortcut) until you choose **Quit** in the icon's menu. Without the icon
+(the extension turned off) closing the window quits.
 
-Subtitle size: the − / + buttons at the top left, Ctrl+minus / Ctrl+plus
-(Ctrl+0 resets), or Ctrl+mouse wheel over the subtitles.
+Settings (the gear button in the title bar): the call's language, subtitle
+size (also Ctrl+minus / Ctrl+plus, Ctrl+0 resets, or Ctrl+mouse wheel over
+the subtitles), the folder calls are saved in, starting at login, and a
+button that opens the recordings folder.
 
 Each call is a folder in `~/Recordings/Calls/`:
 
@@ -160,8 +164,11 @@ recall --ctl /tmp/r.sock '{"cmd":"start"}'
 recall --ctl /tmp/r.sock '{"cmd":"state"}'     # segments, partial text, levels, status
 recall --ctl /tmp/r.sock '{"cmd":"language","language":"es"}'
 recall --ctl /tmp/r.sock '{"cmd":"font_size","size":18}'
+recall --ctl /tmp/r.sock '{"cmd":"output_dir","dir":"/abs/path"}'
+recall --ctl /tmp/r.sock '{"cmd":"autostart","enabled":true}'
 recall --ctl /tmp/r.sock '{"cmd":"transcribe"}'  # (again) for the last call, or "dir":"…"
 recall --ctl /tmp/r.sock '{"cmd":"check_update"}' # look for a newer release now; the state's "update" is the bar's text
+recall --ctl /tmp/r.sock '{"cmd":"close"}'     # the window's close button; "show" brings it back
 recall --ctl /tmp/r.sock '{"cmd":"stop"}'      # also: toggle, quit
 ```
 

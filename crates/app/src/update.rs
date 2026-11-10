@@ -410,11 +410,15 @@ impl Updater {
             ));
             return;
         }
-        // Closing the window shuts down like the close button (an unfinished
-        // transcript is resumed by the new one) and ends the process; the
-        // new one starts then.
-        if let Some(w) = button.root().and_downcast::<gtk::Window>() {
-            w.close();
+        // Quits like the top bar menu (an unfinished transcript is resumed
+        // by the new one); the new process starts once this one has ended.
+        // (Closing the window would only hide it.)
+        if let Some(app) = button
+            .root()
+            .and_downcast::<gtk::Window>()
+            .and_then(|w| w.application())
+        {
+            app.activate_action("quit", None);
         }
     }
 

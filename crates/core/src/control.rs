@@ -23,6 +23,14 @@ pub enum Command {
     FontSize {
         size: f64,
     },
+    /// Folder new calls are saved in (absolute; created if missing).
+    OutputDir {
+        dir: String,
+    },
+    /// Start recall when you log in (installed package only).
+    Autostart {
+        enabled: bool,
+    },
     /// (Re)make the Whisper transcript of a call folder (default: the
     /// current/last call).
     Transcribe {
@@ -32,6 +40,13 @@ pub enum Command {
     /// Look for a newer release now (also in development builds); the
     /// banner offers it (see `State::update`).  Installing needs a click.
     CheckUpdate,
+    /// Like the window's close button: hides the window while the top bar
+    /// icon is there (the app keeps running), otherwise quits.
+    Close,
+    /// Shows the window again (like "Open recall" in the icon's menu).
+    Show,
+    /// Like "Quit" in the icon's menu: ends the app (a recording is saved
+    /// first).
     Quit,
 }
 
@@ -71,6 +86,15 @@ pub struct State {
     /// Text of the "new version" banner ("" while hidden).
     #[serde(default)]
     pub update: String,
+    /// The window is shown (false after it was closed to the top bar).
+    #[serde(default)]
+    pub window_visible: bool,
+    /// Folder new calls are saved in.
+    #[serde(default)]
+    pub output_dir: String,
+    /// The "start at login" setting.
+    #[serde(default)]
+    pub autostart: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -139,6 +163,19 @@ mod tests {
             Command::parse(r#"{"cmd":"check_update"}"#),
             Ok(Command::CheckUpdate)
         );
+        assert_eq!(
+            Command::parse(r#"{"cmd":"output_dir","dir":"/tmp/calls"}"#),
+            Ok(Command::OutputDir {
+                dir: "/tmp/calls".into()
+            })
+        );
+        assert_eq!(
+            Command::parse(r#"{"cmd":"autostart","enabled":true}"#),
+            Ok(Command::Autostart { enabled: true })
+        );
+        assert_eq!(Command::parse(r#"{"cmd":"close"}"#), Ok(Command::Close));
+        assert_eq!(Command::parse(r#"{"cmd":"show"}"#), Ok(Command::Show));
+        assert_eq!(Command::parse(r#"{"cmd":"quit"}"#), Ok(Command::Quit));
     }
 
     #[test]

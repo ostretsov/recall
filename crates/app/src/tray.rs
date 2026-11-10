@@ -195,6 +195,9 @@ pub struct Tray {
     conn: gio::DBusConnection,
     shown: Rc<Shown>,
     registrations: Vec<gio::RegistrationId>,
+    /// The top bar accepted the icon (a StatusNotifierWatcher is running
+    /// and registered it).
+    visible: Rc<Cell<bool>>,
     /// Stops watching for the StatusNotifierWatcher.
     unwatch: Option<Box<dyn FnOnce()>>,
 }
@@ -314,12 +317,15 @@ impl Tray {
         // Register now and whenever the watcher (re)appears (GNOME Shell
         // restarts, the extension gets enabled later).
         let unique = conn.unique_name().map(|n| n.to_string());
+        let visible = Rc::new(Cell::new(false));
+        let (v, gone) = (visible.clone(), visible.clone());
         let unwatch = unique.map(|unique| {
             let id = gio::bus_watch_name_on_connection(
                 conn,
                 WATCHER,
                 gio::BusNameWatcherFlags::NONE,
                 move |conn, _, _| {
+                    let v = v.clone();
                     conn.call(
                         Some(WATCHER),
                         "/StatusNotifierWatcher",
@@ -330,14 +336,15 @@ impl Tray {
                         gio::DBusCallFlags::NONE,
                         -1,
                         gio::Cancellable::NONE,
-                        |r| {
+                        move |r| {
+                            v.set(r.is_ok());
                             if let Err(e) = r {
                                 crate::log::write(&format!("tray icon: {e}"));
                             }
                         },
                     );
                 },
-                |_, _| {},
+                move |_, _| gone.set(false),
             );
             Box::new(move || gio::bus_unwatch_name(id)) as Box<dyn FnOnce()>
         });
@@ -346,8 +353,15 @@ impl Tray {
             conn: conn.clone(),
             shown,
             registrations: vec![item, menu],
+            visible,
             unwatch,
         })
+    }
+
+    /// Whether the icon is in the top bar now: only then can a closed
+    /// window be brought back (and the app quit) from its menu.
+    pub fn is_visible(&self) -> bool {
+        self.visible.get()
     }
 
     /// Red icon and "Stop recording" in the menu while recording.

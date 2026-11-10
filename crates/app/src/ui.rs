@@ -152,6 +152,7 @@ struct App {
     record: gtk::Button,
     elapsed: gtk::Label,
     language: gtk::DropDown,
+    settings: Settings,
     meters: [gtk::LevelBar; 2],
     buffer: gtk::TextBuffer,
     view: gtk::TextView,
@@ -206,20 +207,8 @@ impl App {
             .default_height(640)
             .build();
         let header = gtk::HeaderBar::new();
-        let open = gtk::Button::from_icon_name("folder-open-symbolic");
-        open.set_tooltip_text(Some("Open the recordings folder"));
-        header.pack_end(&open);
-        // Subtitle size: A− / A+ (also Ctrl+minus / Ctrl+plus / Ctrl+0 and
-        // Ctrl+mouse wheel over the subtitles).
-        let zoom = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        zoom.add_css_class("linked");
-        let smaller = gtk::Button::from_icon_name("zoom-out-symbolic");
-        smaller.set_tooltip_text(Some("Smaller subtitles (Ctrl+minus)"));
-        let bigger = gtk::Button::from_icon_name("zoom-in-symbolic");
-        bigger.set_tooltip_text(Some("Bigger subtitles (Ctrl+plus)"));
-        zoom.append(&smaller);
-        zoom.append(&bigger);
-        header.pack_start(&zoom);
+        let settings = Settings::new(&config);
+        header.pack_end(&settings.button);
         window.set_titlebar(Some(&header));
 
         let vbox = gtk::Box::builder()
@@ -242,20 +231,9 @@ impl App {
         let elapsed = gtk::Label::new(Some("0:00:00"));
         elapsed.add_css_class("elapsed");
         elapsed.add_css_class("dim-label");
-        let names: Vec<&str> = Language::ALL.iter().map(|l| l.name()).collect();
-        let language = gtk::DropDown::from_strings(&names);
-        language.set_tooltip_text(Some("Language of the call"));
-        let lang_pos = Language::ALL
-            .iter()
-            .position(|l| *l == config.language)
-            .unwrap_or(0);
-        language.set_selected(lang_pos as u32);
-        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        spacer.set_hexpand(true);
+        let language = settings.language.clone();
         top.append(&record);
         top.append(&elapsed);
-        top.append(&spacer);
-        top.append(&language);
         vbox.append(&top);
 
         // Level meters.
@@ -385,6 +363,7 @@ impl App {
             record: record.clone(),
             elapsed,
             language: language.clone(),
+            settings,
             meters,
             buffer,
             view,
@@ -459,11 +438,19 @@ impl App {
         let a = app.clone();
         banner_button.connect_clicked(move |_| a.download_model());
         let a = app.clone();
-        open.connect_clicked(move |_| a.open_folder());
+        app.settings.open.connect_clicked(move |_| a.open_folder());
         let a = app.clone();
-        smaller.connect_clicked(move |_| a.zoom(-1.0));
+        app.settings.smaller.connect_clicked(move |_| a.zoom(-1.0));
         let a = app.clone();
-        bigger.connect_clicked(move |_| a.zoom(1.0));
+        app.settings.bigger.connect_clicked(move |_| a.zoom(1.0));
+        let a = app.clone();
+        app.settings
+            .folder
+            .connect_clicked(move |_| a.choose_output_dir());
+        let a = app.clone();
+        app.settings
+            .autostart
+            .connect_active_notify(move |sw| a.set_autostart(sw.is_active()));
         let shortcuts = gtk::ShortcutController::new();
         shortcuts.set_scope(gtk::ShortcutScope::Global);
         for (keys, step) in [
@@ -509,17 +496,27 @@ impl App {
         let size = app.st.borrow().config.font_size;
         app.apply_font_size(size);
         let a = app.clone();
-        window.connect_close_request(move |_| {
-            if a.st.borrow().phase == Phase::Idle {
-                a.cancel_job();
-                return glib::Propagation::Proceed;
+        window.connect_close_request(move |w| {
+            // With the top bar icon the app keeps running (recording,
+            // transcripts, the shortcut); its menu brings the window back
+            // or quits.  Without the icon there would be no way back.
+            if a.tray.borrow().as_ref().is_some_and(|t| t.is_visible()) {
+                crate::log::write("window closed; still running in the top bar");
+                w.set_visible(false);
+                return glib::Propagation::Stop;
             }
-            crate::log::write("close requested while recording");
-            // Save the recording first, then quit.
-            a.st.borrow_mut().quit_after_stop = true;
-            a.stop();
+            a.quit();
             glib::Propagation::Stop
         });
+        // "app.quit": the update banner's Restart button.
+        let quit = gio::SimpleAction::new("quit", None);
+        let a = Rc::downgrade(&app);
+        quit.connect_activate(move |_, _| {
+            if let Some(a) = a.upgrade() {
+                a.quit();
+            }
+        });
+        gapp.add_action(&quit);
         let a = app.clone();
         glib::spawn_future_local(async move {
             while let Ok(ev) = events_rx.recv().await {
@@ -579,12 +576,27 @@ impl App {
             a.update_banner();
             a.pump();
         });
+        app.settings.show_output_dir(&app.output_dir());
         app.show_hint();
         app.update_banner();
         app.update_footer();
         app.update_controls();
         window.present();
         Ok(app)
+    }
+
+    /// Ends the app: a recording is saved first; an unfinished transcript
+    /// is resumed at the next start.
+    fn quit(self: &Rc<Self>) {
+        if self.st.borrow().phase != Phase::Idle {
+            crate::log::write("quit requested while recording");
+            self.st.borrow_mut().quit_after_stop = true;
+            self.stop(); // Nothing to do while already saving.
+            return;
+        }
+        self.cancel_job();
+        self.window.destroy();
+        self.gapp.quit();
     }
 
     fn setup_hotkey(self: &Rc<Self>) {
@@ -661,10 +673,9 @@ impl App {
                     a.toggle();
                 }
             }),
-            // Like the window's close button: a recording is saved first.
             quit: Box::new(move || {
                 if let Some(a) = c.upgrade() {
-                    a.window.close();
+                    a.quit();
                 }
             }),
         };
@@ -741,6 +752,7 @@ impl App {
         }
         self.st.borrow_mut().config.font_size = size;
         self.apply_font_size(size);
+        self.settings.show_font_size(size);
         self.save_config();
     }
 
@@ -756,6 +768,73 @@ impl App {
         if let Err(e) = c.save(&self.paths.config_file()) {
             crate::log::write(&format!("saving settings: {e:#}"));
         }
+    }
+
+    fn set_autostart(&self, enabled: bool) {
+        if self.st.borrow().config.autostart == enabled {
+            return;
+        }
+        self.st.borrow_mut().config.autostart = enabled;
+        self.save_config();
+        self.sync_autostart();
+    }
+
+    /// Asks for the folder new calls are saved in.
+    fn choose_output_dir(self: &Rc<Self>) {
+        #[allow(deprecated)]
+        let chooser = gtk::FileChooserNative::new(
+            Some("Save calls in"),
+            Some(&self.window),
+            gtk::FileChooserAction::SelectFolder,
+            Some("Select"),
+            None,
+        );
+        #[allow(deprecated)]
+        {
+            let current = self.output_dir();
+            let _ = std::fs::create_dir_all(&current);
+            let _ = chooser.set_current_folder(Some(&gio::File::for_path(&current)));
+            let a = self.clone();
+            chooser.connect_response(move |c, resp| {
+                if resp == gtk::ResponseType::Accept
+                    && let Some(dir) = c.file().and_then(|f| f.path())
+                    && let Err(e) = a.set_output_dir(&dir)
+                {
+                    a.set_status(&e, true);
+                }
+                c.destroy();
+            });
+            chooser.show();
+        }
+    }
+
+    /// New calls go to `dir` (not while recording).
+    fn set_output_dir(self: &Rc<Self>, dir: &Path) -> Result<(), String> {
+        if self.st.borrow().phase != Phase::Idle {
+            return Err("cannot change the folder while recording".into());
+        }
+        if !dir.is_absolute() {
+            return Err(format!("not an absolute path: {}", dir.display()));
+        }
+        std::fs::create_dir_all(dir).map_err(|e| format!("cannot use {}: {e}", dir.display()))?;
+        // The home folder is written as "~/…" so the setting survives a
+        // renamed home; the default is written as "" (follows the default).
+        let text = if dir == config::Config::default().output_dir(&self.paths.home) {
+            String::new()
+        } else {
+            tilde(dir)
+        };
+        self.st.borrow_mut().config.output_dir = text;
+        self.save_config();
+        self.settings.show_output_dir(&self.output_dir());
+        self.update_footer();
+        if self.st.borrow().config.transcribe {
+            for dir in crate::transcribe::pending(&self.output_dir()) {
+                self.enqueue(dir);
+            }
+            self.pump();
+        }
+        Ok(())
     }
 
     fn set_language(self: &Rc<Self>, lang: Language) {
@@ -1029,6 +1108,7 @@ impl App {
             self.record.add_css_class("destructive-action");
         }
         self.language.set_sensitive(phase == Phase::Idle);
+        self.settings.folder.set_sensitive(phase == Phase::Idle);
         if let Some(t) = self.tray.borrow().as_ref() {
             t.set_recording(phase != Phase::Idle);
         }
@@ -1316,19 +1396,11 @@ impl App {
         }
     }
 
+    /// The folder all calls are saved in.
     fn open_folder(&self) {
-        let dir = self
-            .st
-            .borrow()
-            .call_dir
-            .clone()
-            .filter(|d| d.exists())
-            .unwrap_or_else(|| self.output_dir());
+        let dir = self.output_dir();
         let _ = std::fs::create_dir_all(&dir);
-        let uri = gio::File::for_path(&dir).uri();
-        if let Err(e) = gio::AppInfo::launch_default_for_uri(&uri, None::<&gio::AppLaunchContext>) {
-            self.set_status(&format!("Cannot open {}: {e}", dir.display()), true);
-        }
+        self.open_path(&dir);
     }
 
     fn set_status(&self, text: &str, error: bool) {
@@ -1409,6 +1481,9 @@ impl App {
             transcript_queue: st.queue.len(),
             last_transcript: st.last_transcript.as_ref().map(|p| p.display().to_string()),
             update: self.updater.status(),
+            window_visible: self.window.is_visible(),
+            output_dir: self.output_dir().display().to_string(),
+            autostart: st.config.autostart,
         }
     }
 
@@ -1437,6 +1512,12 @@ impl App {
                 self.language.set_selected(pos as u32);
             }
             Command::FontSize { size } => self.set_font_size(size),
+            Command::OutputDir { dir } => {
+                if let Err(e) = self.set_output_dir(Path::new(&dir)) {
+                    return Reply::error(e);
+                }
+            }
+            Command::Autostart { enabled } => self.settings.autostart.set_active(enabled),
             Command::Transcribe { dir } => {
                 let dir = dir
                     .map(PathBuf::from)
@@ -1448,11 +1529,122 @@ impl App {
                 self.enqueue(dir);
             }
             Command::CheckUpdate => self.updater.check(true),
-            Command::Quit => {
+            Command::Quit => self.quit(),
+            Command::Close => {
                 self.window.close();
             }
+            Command::Show => self.window.present(),
         }
         Reply::state(self.state())
+    }
+}
+
+/// The settings popover behind the gear button in the title bar.
+struct Settings {
+    button: gtk::MenuButton,
+    language: gtk::DropDown,
+    smaller: gtk::Button,
+    bigger: gtk::Button,
+    font_size: gtk::Label,
+    folder: gtk::Button,
+    folder_label: gtk::Label,
+    open: gtk::Button,
+    autostart: gtk::Switch,
+}
+
+impl Settings {
+    fn new(config: &Config) -> Settings {
+        let grid = gtk::Grid::builder()
+            .column_spacing(12)
+            .row_spacing(10)
+            .margin_top(8)
+            .margin_bottom(8)
+            .margin_start(8)
+            .margin_end(8)
+            .build();
+        let mut row = 0;
+        let mut add = |title: &str, widget: &gtk::Widget| {
+            let label = gtk::Label::new(Some(title));
+            label.set_xalign(0.0);
+            grid.attach(&label, 0, row, 1, 1);
+            widget.set_halign(gtk::Align::End);
+            grid.attach(widget, 1, row, 1, 1);
+            row += 1;
+        };
+
+        let names: Vec<&str> = Language::ALL.iter().map(|l| l.name()).collect();
+        let language = gtk::DropDown::from_strings(&names);
+        language.set_tooltip_text(Some("Language of the call"));
+        let pos = Language::ALL
+            .iter()
+            .position(|l| *l == config.language)
+            .unwrap_or(0);
+        language.set_selected(pos as u32);
+        add("Language", language.upcast_ref());
+
+        // Also Ctrl+minus / Ctrl+plus / Ctrl+0 and Ctrl+mouse wheel over
+        // the subtitles.
+        let zoom = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        zoom.add_css_class("linked");
+        let smaller = gtk::Button::from_icon_name("zoom-out-symbolic");
+        smaller.set_tooltip_text(Some("Smaller subtitles (Ctrl+minus)"));
+        let font_size = gtk::Label::new(None);
+        font_size.set_width_chars(6);
+        let bigger = gtk::Button::from_icon_name("zoom-in-symbolic");
+        bigger.set_tooltip_text(Some("Bigger subtitles (Ctrl+plus)"));
+        zoom.append(&smaller);
+        zoom.append(&font_size);
+        zoom.append(&bigger);
+        add("Subtitle size", zoom.upcast_ref());
+
+        let folder_label = gtk::Label::new(None);
+        folder_label.set_ellipsize(gtk::pango::EllipsizeMode::Start);
+        folder_label.set_max_width_chars(28);
+        let folder = gtk::Button::builder().child(&folder_label).build();
+        folder.set_tooltip_text(Some("Choose where new calls are saved"));
+        add("Save calls in", folder.upcast_ref());
+
+        let autostart = gtk::Switch::new();
+        autostart.set_active(config.autostart);
+        autostart.set_tooltip_text(Some("Start recall when you log in"));
+        add("Start at login", autostart.upcast_ref());
+
+        let open = gtk::Button::with_label("Open recordings folder");
+        open.set_margin_top(4);
+        grid.attach(&open, 0, row, 2, 1);
+
+        let popover = gtk::Popover::new();
+        popover.set_child(Some(&grid));
+        let button = gtk::MenuButton::builder()
+            .icon_name("emblem-system-symbolic")
+            .tooltip_text("Settings")
+            .popover(&popover)
+            .build();
+        let s = Settings {
+            button,
+            language,
+            smaller,
+            bigger,
+            font_size,
+            folder,
+            folder_label,
+            open,
+            autostart,
+        };
+        s.show_font_size(config::font_size(config.font_size));
+        s
+    }
+
+    fn show_font_size(&self, size: f64) {
+        self.font_size.set_text(&format!("{size} pt"));
+    }
+
+    fn show_output_dir(&self, dir: &Path) {
+        self.folder_label.set_text(&tilde(dir));
+        self.folder.set_tooltip_text(Some(&format!(
+            "{}\nChoose where new calls are saved",
+            dir.display()
+        )));
     }
 }
 
