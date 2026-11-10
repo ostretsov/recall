@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The recall icon while recording (tray): the same bubble on a red tile. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f66151"/>
+      <stop offset="1" stop-color="#a51d2d"/>
+    </linearGradient>
+  </defs>
+  <!-- the whole square: reads well at tray size -->
+  <rect width="128" height="128" rx="26" fill="url(#bg)"/>
+  <!-- a big white speech bubble with its tail at the bottom left -->
+  <path d="M26 16h76c7 0 12 5 12 12v52c0 7-5 12-12 12H52l-24 20c-3 2-6 0-6-3V92c-6-1-10-6-10-12V28c0-7 5-12 12-12z" fill="#fff"/>
+  <!-- record dot -->
+  <circle cx="40" cy="54" r="16" fill="#e01b24"/>
+  <!-- subtitle lines -->
+  <g stroke="#a51d2d" stroke-width="9" stroke-linecap="round">
+    <path d="M68 42h32"/>
+    <path d="M68 66h24"/>
+  </g>
+</svg>

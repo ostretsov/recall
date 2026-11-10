@@ -40,8 +40,13 @@ the app menu. The first time, press **Download** to get the speech models
 2. Subtitles appear as people talk: **Me** in blue, **Others** in green; the
    grey italic line is still being recognized.
 3. Press **■ Stop**. The accurate transcript is made in the background;
-   **Open transcript** appears when it's ready. The folder button opens the
+   **Open folder** (the call's folder: transcript and recordings) appears
+   when it's ready. The folder button in the title bar opens all the
    recordings.
+
+While recall runs, its icon is in the top bar (Ubuntu's AppIndicator
+extension, on by default): click it to show the window; its menu starts or
+stops recording and quits. The icon turns red while recording.
 
 Subtitle size: the − / + buttons at the top left, Ctrl+minus / Ctrl+plus
 (Ctrl+0 resets), or Ctrl+mouse wheel over the subtitles.
@@ -78,7 +83,20 @@ font_size = 13.0                 # subtitle size in points
 transcribe = true                # accurate transcript after each call
 transcript_model = "auto"        # auto, base, small, turbo
 gpu = true                       # use a dedicated graphics card (Vulkan)
+check_updates = true             # look for a newer release at start
+autostart = false                # start recall when you log in
 ```
+
+**Updates.** At start the installed app asks GitHub whether a newer release
+exists. If so, a bar at the top offers to install it: one click downloads
+the `.deb`, checks its SHA-256 and installs it (Ubuntu asks for your
+password), then **Restart recall** starts the new version (not while
+recording; an unfinished transcript is resumed). Development builds don't
+check. `check_updates = false` turns it off.
+
+**Start at login.** `autostart = true` makes the installed app add
+`~/.config/autostart/recall.desktop` at its next start (`false` removes it
+again). With `--config-dir` the entry starts recall with that folder.
 
 ### Transcript models
 
@@ -143,6 +161,7 @@ recall --ctl /tmp/r.sock '{"cmd":"state"}'     # segments, partial text, levels,
 recall --ctl /tmp/r.sock '{"cmd":"language","language":"es"}'
 recall --ctl /tmp/r.sock '{"cmd":"font_size","size":18}'
 recall --ctl /tmp/r.sock '{"cmd":"transcribe"}'  # (again) for the last call, or "dir":"…"
+recall --ctl /tmp/r.sock '{"cmd":"check_update"}' # look for a newer release now; the state's "update" is the bar's text
 recall --ctl /tmp/r.sock '{"cmd":"stop"}'      # also: toggle, quit
 ```
 

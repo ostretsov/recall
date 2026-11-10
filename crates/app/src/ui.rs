@@ -34,6 +34,7 @@ const CSS: &str = "
 .elapsed { font-size: 15pt; font-feature-settings: 'tnum'; }
 .banner { background: alpha(@accent_bg_color, 0.15); border-radius: 6px; padding: 8px; }
 .status-error { color: #c01c28; }
+.update-bar { padding: 4px 8px; border-radius: 6px; background: alpha(@accent_bg_color, 0.15); }
 ";
 
 pub struct Args {
@@ -167,6 +168,8 @@ struct App {
     job_label: gtk::Label,
     job_bar: gtk::ProgressBar,
     job_open: gtk::Button,
+    updater: crate::update::Updater,
+    tray: RefCell<Option<crate::tray::Tray>>,
     jobs_tx: async_channel::Sender<JobEvent>,
     config_dir: Option<PathBuf>,
     /// Holds the `.subtitles` font size rule.
@@ -198,6 +201,7 @@ impl App {
         let window = gtk::ApplicationWindow::builder()
             .application(gapp)
             .title("recall")
+            .icon_name(APP_ID)
             .default_width(560)
             .default_height(640)
             .build();
@@ -226,6 +230,9 @@ impl App {
             .margin_start(12)
             .margin_end(12)
             .build();
+
+        let updater = crate::update::Updater::new();
+        vbox.append(&updater.root);
 
         // Record button, elapsed time, language.
         let top = gtk::Box::new(gtk::Orientation::Horizontal, 12);
@@ -355,7 +362,8 @@ impl App {
         let job_bar = gtk::ProgressBar::new();
         job_bar.set_valign(gtk::Align::Center);
         job_bar.set_size_request(120, -1);
-        let job_open = gtk::Button::with_label("Open transcript");
+        let job_open = gtk::Button::with_label("Open folder");
+        job_open.set_tooltip_text(Some("The call's folder: transcript and recordings"));
         job_row.append(&job_label);
         job_row.append(&job_bar);
         job_row.append(&job_open);
@@ -392,6 +400,8 @@ impl App {
             job_label,
             job_bar,
             job_open: job_open.clone(),
+            updater,
+            tray: RefCell::new(None),
             jobs_tx,
             config_dir: args.config_dir.clone(),
             font_css: gtk::CssProvider::new(),
@@ -422,8 +432,13 @@ impl App {
         });
         let a = app.clone();
         job_open.connect_clicked(move |_| {
-            if let Some(p) = a.st.borrow().last_transcript.clone() {
-                a.open_path(&p);
+            let dir =
+                a.st.borrow()
+                    .last_transcript
+                    .as_ref()
+                    .and_then(|p| p.parent().map(Path::to_path_buf));
+            if let Some(dir) = dir {
+                a.open_path(&dir);
             }
         });
         let a = app.clone();
@@ -521,6 +536,16 @@ impl App {
         });
 
         app.setup_hotkey();
+        app.sync_autostart();
+        app.start_tray();
+        let a = Rc::downgrade(&app);
+        app.updater.set_recording_check(move || {
+            a.upgrade()
+                .is_some_and(|a| a.st.borrow().phase != Phase::Idle)
+        });
+        if app.st.borrow().config.check_updates {
+            app.updater.check(false);
+        }
         if let Some(path) = &args.control {
             let (tx, rx) = async_channel::unbounded::<Request>();
             crate::control::serve(path, tx)?;
@@ -592,6 +617,97 @@ impl App {
                 crate::log::write(&format!("global shortcut: {e:#}"));
                 self.set_status(&format!("Global shortcut not available: {e:#}"), false);
             }
+        }
+    }
+
+    /// The top bar icon (needs Ubuntu's AppIndicator extension, which is on
+    /// by default; elsewhere nothing shows and nothing breaks).
+    fn start_tray(self: &Rc<Self>) {
+        // A NON_UNIQUE app has no bus connection of its own.
+        let conn = match gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE) {
+            Ok(c) => c,
+            Err(e) => {
+                crate::log::write(&format!("tray icon: {e}"));
+                return;
+            }
+        };
+        // Not installed (a development build): stock icons.
+        let installed = gdk::Display::default()
+            .is_some_and(|d| gtk::IconTheme::for_display(&d).has_icon(APP_ID));
+        let icons = if installed {
+            crate::tray::Icons {
+                idle: APP_ID.into(),
+                recording: format!("{APP_ID}-recording"),
+            }
+        } else {
+            crate::tray::Icons {
+                idle: "audio-input-microphone".into(),
+                recording: "media-record".into(),
+            }
+        };
+        let (a, b, c) = (
+            Rc::downgrade(self),
+            Rc::downgrade(self),
+            Rc::downgrade(self),
+        );
+        let actions = crate::tray::Actions {
+            open: Box::new(move || {
+                if let Some(a) = a.upgrade() {
+                    a.window.present();
+                }
+            }),
+            toggle: Box::new(move || {
+                if let Some(a) = b.upgrade() {
+                    a.toggle();
+                }
+            }),
+            // Like the window's close button: a recording is saved first.
+            quit: Box::new(move || {
+                if let Some(a) = c.upgrade() {
+                    a.window.close();
+                }
+            }),
+        };
+        match crate::tray::Tray::start(&conn, icons, actions) {
+            Ok(t) => *self.tray.borrow_mut() = Some(t),
+            Err(e) => crate::log::write(&format!("tray icon: {e}")),
+        }
+    }
+
+    /// Adds or removes the login autostart entry to match the setting.
+    fn sync_autostart(&self) {
+        use recall_core::autostart;
+        let exe = std::env::current_exe().unwrap_or_default();
+        let enabled = self.st.borrow().config.autostart;
+        if !recall_core::update::is_installed_package(&exe) {
+            if enabled {
+                crate::log::write(&format!(
+                    "autostart: not changed, {} is not an installed package",
+                    exe.display()
+                ));
+            }
+            return;
+        }
+        let xdg = std::env::var_os("XDG_CONFIG_HOME")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from);
+        let dir = autostart::dir(&self.paths.home, xdg);
+        let config_dir = self
+            .config_dir
+            .as_ref()
+            .map(|d| std::path::absolute(d).unwrap_or_else(|_| d.clone()));
+        match autostart::sync(&dir, enabled, config_dir.as_deref()) {
+            Ok(autostart::Action::Nothing) => {}
+            Ok(a) => crate::log::write(&format!(
+                "autostart: {} {}",
+                if matches!(a, autostart::Action::Remove) {
+                    "removed"
+                } else {
+                    "wrote"
+                },
+                dir.join(autostart::FILE).display()
+            )),
+            Err(e) => crate::log::write(&format!("autostart: {e:#}")),
         }
     }
 
@@ -913,6 +1029,9 @@ impl App {
             self.record.add_css_class("destructive-action");
         }
         self.language.set_sensitive(phase == Phase::Idle);
+        if let Some(t) = self.tray.borrow().as_ref() {
+            t.set_recording(phase != Phase::Idle);
+        }
         if phase != Phase::Recording {
             self.elapsed.add_css_class("dim-label");
         } else {
@@ -1289,6 +1408,7 @@ impl App {
             transcript_progress: st.job_progress,
             transcript_queue: st.queue.len(),
             last_transcript: st.last_transcript.as_ref().map(|p| p.display().to_string()),
+            update: self.updater.status(),
         }
     }
 
@@ -1327,6 +1447,7 @@ impl App {
                 let _ = std::fs::remove_file(dir.join(call::TRANSCRIPT_FAILED));
                 self.enqueue(dir);
             }
+            Command::CheckUpdate => self.updater.check(true),
             Command::Quit => {
                 self.window.close();
             }

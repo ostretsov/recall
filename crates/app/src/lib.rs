@@ -10,4 +10,6 @@ pub mod models;
 pub mod recorder;
 pub mod selftest;
 pub mod transcribe;
+pub mod tray;
 pub mod ui;
+pub mod update;

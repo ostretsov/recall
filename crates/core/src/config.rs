@@ -44,6 +44,10 @@ pub struct Config {
     pub transcript_model: WhisperModel,
     /// Use the graphics card (Vulkan) for Whisper when there is one.
     pub gpu: bool,
+    /// At start, look for a newer release on GitHub and offer to install it.
+    pub check_updates: bool,
+    /// Start recall when you log in (installed package only).
+    pub autostart: bool,
 }
 
 /// Subtitle font sizes in points: smallest, largest, default.
@@ -75,6 +79,8 @@ impl Default for Config {
             transcribe: true,
             transcript_model: WhisperModel::default(),
             gpu: true,
+            check_updates: true,
+            autostart: false,
         }
     }
 }
@@ -210,6 +216,18 @@ mod tests {
     #[test]
     fn bad_language_is_an_error() {
         assert!(Config::parse("language = \"xx\"").is_err());
+    }
+
+    #[test]
+    fn update_and_autostart_defaults() {
+        let c = Config::default();
+        assert!(c.check_updates);
+        assert!(!c.autostart);
+        let c = Config::parse("autostart = true\ncheck_updates = false\n").unwrap();
+        assert!(c.autostart);
+        assert!(!c.check_updates);
+        // Files from older versions lack the keys.
+        assert!(!Config::parse("gpu = false\n").unwrap().autostart);
     }
 
     #[test]

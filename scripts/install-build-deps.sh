@@ -7,6 +7,6 @@ set -e
 sudo apt-get install -y build-essential pkg-config curl python3 cmake libclang-dev xz-utils \
   libgtk-4-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev liborc-0.4-dev \
   gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-pulseaudio \
-  pulseaudio-utils
+  pulseaudio-utils librsvg2-bin
 "$(dirname "$0")/fetch-vosk.sh"
 "$(dirname "$0")/fetch-vulkan-sdk.sh"

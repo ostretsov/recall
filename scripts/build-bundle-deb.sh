@@ -100,8 +100,23 @@ chmod 755 "$opt/bin/recall"
 
 mkdir -p "$root/usr/bin"
 ln -s "$PREFIX/bin/recall" "$root/usr/bin/recall"
-install -Dm644 packaging/recall.desktop "$root/usr/share/applications/recall.desktop"
+# The menu entry and icon are named after the GTK application id, so GNOME
+# matches the running window to them (dock icon, "Add to Favorites").
+app_id=io.github.ostretsov.recall
+install -Dm644 packaging/$app_id.desktop "$root/usr/share/applications/$app_id.desktop"
+# The -recording variant is the tray icon while recording.
+for icon in $app_id $app_id-recording; do
+  install -Dm644 packaging/$icon.svg "$root/usr/share/icons/hicolor/scalable/apps/$icon.svg"
+  for size in 24 32 48 64 128 256; do
+    dir="$root/usr/share/icons/hicolor/${size}x$size/apps"
+    mkdir -p "$dir"
+    rsvg-convert -w $size -h $size packaging/$icon.svg -o "$dir/$icon.png"
+  done
+done
 install -Dm644 README.md "$root/usr/share/doc/recall/README.md"
+# Not the builder's umask (group-writable on Ubuntu).
+find "$root/usr" -type d -exec chmod 755 {} +
+find "$root/usr" -type f -exec chmod 644 {} +
 
 # Runtime dependencies: the system packages that own the libraries we did not
 # bundle (found with dpkg, so nothing is forgotten).

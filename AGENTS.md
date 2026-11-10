@@ -58,6 +58,9 @@ Test instances must not touch the user's setup:
 - The global shortcut can only be tested with synthetic keys: do that
   *inside* `xvfb-run` (its own display) with XTest via Python ctypes
   (`libXtst.so.6`), never on the user's display.
+- The tray icon registers on the session bus: run test instances under
+  `xvfb-run -a dbus-run-session -- …`, or it appears in the user's top bar.
+  `tests/tray.rs` uses a private bus (`gio::TestDBus`).
 - Start background apps with `setsid … & disown`. Don't `pkill -f
   <pattern>` (matches your own shell); use `pkill -x recall` only when the
   user's own recall is not running.
@@ -108,6 +111,15 @@ Test instances must not touch the user's setup:
   libraries matched by `EXCLUDE` into `/opt/recall/lib`; `Depends` comes from
   `dpkg -S` of the excluded ones. A new GStreamer element needs its plugin
   in `PLUGINS` there and an entry in `core::deps::ELEMENTS`.
+- Releasing: push a `vX.Y.Z` tag (README, "Release"); the tag's CI run
+  publishes the `.deb` on GitHub (`ostretsov/recall`), and installed apps
+  then offer it (`core::update`, banner in `app/src/update.rs`).
+  `RECALL_UPDATE_URL` replaces the GitHub API URL. Autostart entries
+  (`core::autostart`) and update checks happen only for installed packages
+  (`/opt/recall`, `/usr/bin/recall`), so dev/test instances never touch the
+  user's session; `{"cmd":"check_update"}` checks anyway.
+- Icons: `packaging/io.github.ostretsov.recall*.svg` (app; `-recording` is
+  the tray icon while recording), installed into hicolor by the deb script.
 - `make docker-test` installs the .deb in clean containers and runs
   `recall --self-test` (test tones through the real recorder). Run it after
   packaging changes.

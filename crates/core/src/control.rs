@@ -29,6 +29,9 @@ pub enum Command {
         #[serde(default)]
         dir: Option<String>,
     },
+    /// Look for a newer release now (also in development builds); the
+    /// banner offers it (see `State::update`).  Installing needs a click.
+    CheckUpdate,
     Quit,
 }
 
@@ -65,6 +68,9 @@ pub struct State {
     pub transcript_queue: usize,
     /// The last finished `transcript.md`.
     pub last_transcript: Option<String>,
+    /// Text of the "new version" banner ("" while hidden).
+    #[serde(default)]
+    pub update: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -128,6 +134,10 @@ mod tests {
         assert_eq!(
             Command::parse(r#"{"cmd":"transcribe"}"#),
             Ok(Command::Transcribe { dir: None })
+        );
+        assert_eq!(
+            Command::parse(r#"{"cmd":"check_update"}"#),
+            Ok(Command::CheckUpdate)
         );
     }
 
