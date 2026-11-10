@@ -111,7 +111,8 @@ Test instances must not touch the user's setup:
   libraries matched by `EXCLUDE` into `/opt/recall/lib`; `Depends` comes from
   `dpkg -S` of the excluded ones. A new GStreamer element needs its plugin
   in `PLUGINS` there and an entry in `core::deps::ELEMENTS`.
-- Releasing: push a `vX.Y.Z` tag (README, "Release"); the tag's CI run
+- Releasing: the `/release` skill (`.claude/skills/release/SKILL.md`)
+  bumps the version, commits, tags `vX.Y.Z` and pushes; the tag's CI run
   publishes the `.deb` on GitHub (`ostretsov/recall`), and installed apps
   then offer it (`core::update`, banner in `app/src/update.rs`).
   `RECALL_UPDATE_URL` replaces the GitHub API URL. Autostart entries
