@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=recall
+Comment=Record calls with live subtitles
+Exec=recall
+Icon=audio-input-microphone
+Terminal=false
+Categories=AudioVideo;Audio;Recorder;
+Keywords=record;call;meet;zoom;teams;transcript;subtitles;

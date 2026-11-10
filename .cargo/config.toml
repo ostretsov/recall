@@ -1,0 +1,4 @@
+# whisper.cpp's Vulkan backend is built against the SDK parts that
+# scripts/fetch-vulkan-sdk.sh puts here (glslc, headers, loader).
+[env]
+VULKAN_SDK = { value = "vendor/vulkan-sdk", relative = true }

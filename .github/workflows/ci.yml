@@ -1,0 +1,35 @@
+# Lint and tests on every push and pull request (the release workflow also
+# builds and tests the .deb).
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+    tags-ignore: ["v*"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/cache@v4
+        with:
+          path: vendor
+          key: vendor-${{ hashFiles('scripts/fetch-*.sh') }}
+
+      - name: Build dependencies
+        # The runner image's libunwind-14-dev conflicts with libunwind-dev (needed by libgstreamer1.0-dev).
+        run: |
+          sudo apt-get remove -y libunwind-14-dev || true
+          sudo apt-get update -qq
+          scripts/install-build-deps.sh
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - run: make lint
+      - run: make test
