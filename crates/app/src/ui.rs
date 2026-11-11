@@ -40,6 +40,8 @@ const CSS: &str = "
 pub struct Args {
     pub config_dir: Option<PathBuf>,
     pub control: Option<PathBuf>,
+    /// `--hidden` (the login autostart entry): only the top bar icon.
+    pub hidden: bool,
 }
 
 pub fn run(args: Args) -> glib::ExitCode {
@@ -581,8 +583,36 @@ impl App {
         app.update_banner();
         app.update_footer();
         app.update_controls();
-        window.present();
+        if args.hidden {
+            app.present_unless_tray();
+        } else {
+            window.present();
+        }
         Ok(app)
+    }
+
+    /// `--hidden`: the window stays closed once the top bar icon is up.  It
+    /// registers asynchronously (at login the shell may still be starting),
+    /// so wait a little; without it there would be no way to the window.
+    fn present_unless_tray(self: &Rc<Self>) {
+        const WAIT: std::time::Duration = std::time::Duration::from_secs(15);
+        let since = Instant::now();
+        let a = Rc::downgrade(self);
+        glib::timeout_add_local(std::time::Duration::from_millis(250), move || {
+            let Some(a) = a.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            if a.tray.borrow().as_ref().is_some_and(|t| t.is_visible()) {
+                crate::log::write("started hidden; the window is in the top bar");
+                return glib::ControlFlow::Break;
+            }
+            if since.elapsed() < WAIT {
+                return glib::ControlFlow::Continue;
+            }
+            crate::log::write("started hidden, but there is no top bar icon: showing the window");
+            a.window.present();
+            glib::ControlFlow::Break
+        });
     }
 
     /// Ends the app: a recording is saved first; an unfinished transcript

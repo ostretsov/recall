@@ -6,6 +6,8 @@
 //! user's session), and the entry is removed only if it is the one this
 //! instance would write, so an instance with another `--config-dir` leaves
 //! the user's entry alone.
+//!
+//! The entry starts recall with `--hidden`: only the top bar icon, no window.
 
 use std::path::{Path, PathBuf};
 
@@ -22,13 +24,30 @@ pub fn dir(home: &Path, xdg_config_home: Option<PathBuf>) -> PathBuf {
         .join("autostart")
 }
 
+/// Command-line flag: start without showing the window.
+pub const HIDDEN: &str = "--hidden";
+
 /// The entry's contents; `config_dir` is the `--config-dir` the app was
 /// started with, if any.
 pub fn desktop_entry(config_dir: Option<&Path>) -> String {
+    entry(config_dir, true)
+}
+
+/// The entry written by 0.2.0 (window shown at login); still ours to
+/// replace or remove.
+fn old_entry(config_dir: Option<&Path>) -> String {
+    entry(config_dir, false)
+}
+
+fn entry(config_dir: Option<&Path>, hidden: bool) -> String {
     let mut exec = EXEC.to_string();
     if let Some(d) = config_dir {
         exec.push_str(" --config-dir ");
         exec.push_str(&quote(&d.display().to_string()));
+    }
+    if hidden {
+        exec.push(' ');
+        exec.push_str(HIDDEN);
     }
     format!(
         "[Desktop Entry]\n\
@@ -75,10 +94,11 @@ pub enum Action {
 /// current contents, if it exists.
 pub fn plan(enabled: bool, config_dir: Option<&Path>, existing: Option<&str>) -> Action {
     let want = desktop_entry(config_dir);
+    let ours = |e: &str| e == want || e == old_entry(config_dir);
     match (enabled, existing) {
         (true, Some(e)) if e == want => Action::Nothing,
         (true, _) => Action::Write(want),
-        (false, Some(e)) if e == want => Action::Remove,
+        (false, Some(e)) if ours(e) => Action::Remove,
         (false, _) => Action::Nothing,
     }
 }
@@ -125,12 +145,14 @@ mod tests {
     fn entry() {
         let e = desktop_entry(None);
         assert!(e.starts_with("[Desktop Entry]\n"));
-        assert!(e.contains("\nExec=/usr/bin/recall\n"));
+        assert!(e.contains("\nExec=/usr/bin/recall --hidden\n"));
         let e = desktop_entry(Some(Path::new("/home/a/.config/recall-work")));
-        assert!(e.contains("\nExec=/usr/bin/recall --config-dir /home/a/.config/recall-work\n"));
+        assert!(e.contains(
+            "\nExec=/usr/bin/recall --config-dir /home/a/.config/recall-work --hidden\n"
+        ));
         let e = desktop_entry(Some(Path::new("/home/a/my calls")));
         assert!(
-            e.contains("Exec=/usr/bin/recall --config-dir \"/home/a/my calls\"\n"),
+            e.contains("Exec=/usr/bin/recall --config-dir \"/home/a/my calls\" --hidden\n"),
             "{e}"
         );
     }
@@ -149,6 +171,11 @@ mod tests {
             Action::Nothing
         );
         assert_eq!(plan(false, None, Some("edited")), Action::Nothing);
+        // The entry of 0.2.0 (no --hidden) is upgraded or removed.
+        let old = old_entry(None);
+        assert!(old.contains("\nExec=/usr/bin/recall\n"));
+        assert_eq!(plan(true, None, Some(&old)), Action::Write(ours.clone()));
+        assert_eq!(plan(false, None, Some(&old)), Action::Remove);
     }
 
     #[test]

@@ -13,6 +13,7 @@ Usage: recall [options]
 
   --config-dir DIR       settings folder (default ~/.config/recall)
   --control SOCK         accept control commands on a Unix socket
+  --hidden               start in the top bar, without the window
   --ctl SOCK JSON        send one command to a running recall, print the reply
   --download-model NAME  download a model: en, ru, es (live subtitles),
                          base, small, turbo (Whisper), vad
@@ -28,6 +29,7 @@ fn main() -> ExitCode {
     let mut args = Args {
         config_dir: None,
         control: None,
+        hidden: false,
     };
     let all: Vec<String> = std::env::args().skip(1).collect();
     let flag = |f: &str| all.iter().any(|a| a == f);
@@ -65,6 +67,7 @@ fn main() -> ExitCode {
                 let dir = value("--transcribe");
                 return transcribe(dir.as_ref(), args.config_dir.clone(), no_gpu, machine);
             }
+            "--hidden" => args.hidden = true,
             "--no-gpu" | "--machine" => {}
             "--gpu" => {
                 vulkan_quiet();

@@ -100,7 +100,9 @@ check. `check_updates = false` turns it off.
 
 **Start at login.** `autostart = true` makes the installed app add
 `~/.config/autostart/recall.desktop` at its next start (`false` removes it
-again). With `--config-dir` the entry starts recall with that folder.
+again). The entry starts recall with `--hidden`: only the top bar icon
+shows (if there is no top bar icon after 15 seconds, the window opens
+anyway). With `--config-dir` the entry starts recall with that folder.
 
 ### Transcript models
 
