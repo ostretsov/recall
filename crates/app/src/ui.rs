@@ -157,6 +157,9 @@ struct App {
     elapsed: gtk::Label,
     language: gtk::DropDown,
     settings: Settings,
+    /// The open folder chooser (kept alive until it answers).
+    #[allow(deprecated)]
+    chooser: RefCell<Option<gtk::FileChooserNative>>,
     meters: [gtk::LevelBar; 2],
     buffer: gtk::TextBuffer,
     view: gtk::TextView,
@@ -228,7 +231,7 @@ impl App {
         let updater = crate::update::Updater::new();
         vbox.append(&updater.root);
 
-        // Record button, elapsed time, language.
+        // Language, Record button, elapsed time.
         let top = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         let record = gtk::Button::with_label("● Record");
         record.add_css_class("record");
@@ -237,6 +240,7 @@ impl App {
         elapsed.add_css_class("elapsed");
         elapsed.add_css_class("dim-label");
         let language = settings.language.clone();
+        top.append(&language);
         top.append(&record);
         top.append(&elapsed);
         vbox.append(&top);
@@ -372,6 +376,7 @@ impl App {
             elapsed,
             language: language.clone(),
             settings,
+            chooser: RefCell::new(None),
             meters,
             buffer,
             view,
@@ -848,33 +853,52 @@ impl App {
         self.sync_autostart();
     }
 
-    /// Asks for the folder new calls are saved in.
-    fn choose_output_dir(self: &Rc<Self>) {
+    /// Shows a folder chooser starting in `start`; `picked` gets the choice.
+    fn choose_folder(
+        self: &Rc<Self>,
+        title: &str,
+        accept: &str,
+        start: &Path,
+        picked: impl Fn(&Rc<Self>, &Path) -> Result<(), String> + 'static,
+    ) {
+        // A chooser opened while the popover has its grab can't be used.
+        self.settings.button.popdown();
         #[allow(deprecated)]
         let chooser = gtk::FileChooserNative::new(
-            Some("Save calls in"),
+            Some(title),
             Some(&self.window),
             gtk::FileChooserAction::SelectFolder,
-            Some("Select"),
+            Some(accept),
             None,
         );
         #[allow(deprecated)]
         {
-            let current = self.output_dir();
-            let _ = std::fs::create_dir_all(&current);
-            let _ = chooser.set_current_folder(Some(&gio::File::for_path(&current)));
+            let _ = chooser.set_current_folder(Some(&gio::File::for_path(start)));
             let a = self.clone();
             chooser.connect_response(move |c, resp| {
                 if resp == gtk::ResponseType::Accept
                     && let Some(dir) = c.file().and_then(|f| f.path())
-                    && let Err(e) = a.set_output_dir(&dir)
+                    && let Err(e) = picked(&a, &dir)
                 {
                     a.set_status(&e, true);
                 }
                 c.destroy();
+                a.chooser.replace(None);
             });
             chooser.show();
         }
+        // Nothing else holds the chooser: dropped, it would close at once
+        // ("The folder contents could not be displayed").
+        self.chooser.replace(Some(chooser));
+    }
+
+    /// Asks for the folder new calls are saved in.
+    fn choose_output_dir(self: &Rc<Self>) {
+        let current = self.output_dir();
+        let _ = std::fs::create_dir_all(&current);
+        self.choose_folder("Save calls in", "Select", &current, |a, dir| {
+            a.set_output_dir(dir)
+        });
     }
 
     /// New calls go to `dir` (not while recording).
@@ -1331,29 +1355,12 @@ impl App {
 
     /// Asks for a call folder and makes its transcript again.
     fn choose_call_to_transcribe(self: &Rc<Self>) {
-        #[allow(deprecated)]
-        let chooser = gtk::FileChooserNative::new(
-            Some("Transcribe again: choose the call's folder"),
-            Some(&self.window),
-            gtk::FileChooserAction::SelectFolder,
-            Some("Transcribe"),
-            None,
+        self.choose_folder(
+            "Transcribe again: choose the call's folder",
+            "Transcribe",
+            &self.output_dir(),
+            |a, dir| a.retranscribe(dir),
         );
-        #[allow(deprecated)]
-        {
-            let _ = chooser.set_current_folder(Some(&gio::File::for_path(self.output_dir())));
-            let a = self.clone();
-            chooser.connect_response(move |c, resp| {
-                if resp == gtk::ResponseType::Accept
-                    && let Some(dir) = c.file().and_then(|f| f.path())
-                    && let Err(e) = a.retranscribe(&dir)
-                {
-                    a.set_status(&e, true);
-                }
-                c.destroy();
-            });
-            chooser.show();
-        }
     }
 
     fn enqueue(self: &Rc<Self>, dir: PathBuf) {
@@ -1727,7 +1734,7 @@ impl Settings {
             .position(|l| *l == config.language)
             .unwrap_or(0);
         language.set_selected(pos as u32);
-        add("Language", language.upcast_ref());
+        language.set_valign(gtk::Align::Center);
 
         // Also Ctrl+minus / Ctrl+plus / Ctrl+0 and Ctrl+mouse wheel over
         // the subtitles.

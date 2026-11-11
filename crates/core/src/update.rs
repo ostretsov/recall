@@ -153,6 +153,36 @@ pub fn install_failure(code: Option<i32>) -> Option<&'static str> {
     }
 }
 
+/// The reason in apt-get's output (stdout and stderr), for the banner.
+///
+/// apt refuses to install anything while some *other* package is broken
+/// ("Unmet dependencies. Try 'apt --fix-broken install'"): that case names
+/// the package, because apt's own advice doesn't say what is wrong.
+pub fn apt_error(output: &str) -> String {
+    let broken: Vec<&str> = output
+        .lines()
+        .skip_while(|l| !l.contains("have unmet dependencies"))
+        .skip(1)
+        .take_while(|l| l.starts_with(' '))
+        .filter_map(|l| l.split_once(" : "))
+        .map(|(name, _)| name.trim())
+        .filter(|name| !name.is_empty() && *name != "recall" && !name.starts_with("recall:"))
+        .collect();
+    if !broken.is_empty() {
+        let names = broken.join(", ");
+        return format!(
+            "another package is broken and blocks all installations: {names}. \
+             Repair or remove it (in a terminal: sudo apt remove {}), then try again",
+            broken.join(" ")
+        );
+    }
+    output
+        .lines()
+        .rfind(|l| l.starts_with("E:"))
+        .map(|l| l.trim_start_matches("E:").trim().to_string())
+        .unwrap_or_default()
+}
+
 /// Shell script that waits for process `pid` to exit (its global shortcut
 /// and control socket are then free) and starts recall again with the arguments that follow it.
 pub fn restart_script(pid: u32) -> String {
@@ -256,6 +286,28 @@ mod tests {
         assert!(!is_installed_package(Path::new(
             "/home/a/recall/target/debug/recall"
         )));
+    }
+
+    #[test]
+    fn apt_errors() {
+        let blocked = "Reading package lists...\n\
+            You might want to run 'apt --fix-broken install' to correct these.\n\
+            The following packages have unmet dependencies:\n \
+            farlink : Depends: libc6 (>= 2.39) but 2.35-0ubuntu3.15 is installed\n\
+            E: Unmet dependencies. Try 'apt --fix-broken install' with no packages (or specify a solution).\n";
+        let e = apt_error(blocked);
+        assert!(e.starts_with("another package is broken"), "{e}");
+        assert!(e.contains("sudo apt remove farlink"), "{e}");
+        // recall's own missing dependency: apt's message.
+        let own = "The following packages have unmet dependencies:\n \
+            recall : Depends: libfoo1 but it is not installable\n\
+            E: Unable to correct problems, you have held broken packages.\n";
+        assert_eq!(
+            apt_error(own),
+            "Unable to correct problems, you have held broken packages."
+        );
+        assert_eq!(apt_error("E: Could not get lock\n"), "Could not get lock");
+        assert_eq!(apt_error(""), "");
     }
 
     #[test]

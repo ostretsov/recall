@@ -50,10 +50,15 @@ window only hides it: recall keeps running (recording, transcripts, the
 shortcut) until you choose **Quit** in the icon's menu. Without the icon
 (the extension turned off) closing the window quits.
 
-Settings (the gear button in the title bar): the call's language, subtitle
-size (also Ctrl+minus / Ctrl+plus, Ctrl+0 resets, or Ctrl+mouse wheel over
-the subtitles), the folder calls are saved in, starting at login, and a
-button that opens the recordings folder.
+The call's language is chosen next to the Record button. Settings (the gear
+button in the title bar): subtitle size (also Ctrl+minus / Ctrl+plus, Ctrl+0
+resets, or Ctrl+mouse wheel over the subtitles), the folder calls are saved
+in, starting at login, a button that opens the recordings folder and
+"Transcribe a call again…".
+
+Recorded with the wrong language? Change `"language"` in the call's
+`call.json` (`en`, `ru`, `es`) and use "Transcribe a call again…": the
+transcript is made in that language (the live subtitles stay as they were).
 
 Each call is a folder in `~/Recordings/Calls/`:
 

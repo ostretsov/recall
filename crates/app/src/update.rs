@@ -129,12 +129,15 @@ pub fn install(deb: &Path) -> anyhow::Result<()> {
         String::from_utf8_lossy(&out.stderr)
     ));
     if let Some(why) = update::install_failure(out.status.code()) {
-        let detail = String::from_utf8_lossy(&out.stderr)
-            .lines()
-            .rfind(|l| l.starts_with("E:"))
-            .map(|l| format!(": {}", l.trim_start_matches("E:").trim()))
-            .unwrap_or_default();
-        bail!("{why}{detail}");
+        let output = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        match update::apt_error(&output) {
+            e if e.is_empty() => bail!("{why}"),
+            e => bail!("{why}: {e}"),
+        }
     }
     Ok(())
 }
