@@ -1390,13 +1390,25 @@ impl App {
                             true,
                         );
                     }
-                    Err(_) if crashed && gpu => {
-                        crate::log::write("transcriber crashed on the GPU; retrying on the CPU");
+                    Err(e) if crashed && gpu => {
+                        crate::log::call_error(
+                            &dir,
+                            &format!("transcribing on the graphics card: {e}; retrying on the CPU"),
+                        );
                         let mut st = self.st.borrow_mut();
                         st.cpu_only.insert(dir.clone());
                         st.queue.push_front(dir);
                     }
                     Err(e) => {
+                        // A transcriber that reported the error itself has
+                        // written both files; one that crashed could not.
+                        // Without the mark the call would be tried (and
+                        // crash) again at every start.
+                        let failed = dir.join(call::TRANSCRIPT_FAILED);
+                        if !failed.exists() {
+                            crate::log::call_error(&dir, &format!("transcribing failed: {e}"));
+                            let _ = std::fs::write(&failed, format!("{e}\n"));
+                        }
                         self.show_job(
                             &format!("Transcript of {} failed: {e}", folder_name(&dir)),
                             None,

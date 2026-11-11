@@ -66,6 +66,7 @@ Each call is a folder in `~/Recordings/Calls/`:
 | `transcript.md`   | the accurate transcript (Whisper), made after the call |
 | `transcript.json` | the same with start/end times per line                 |
 | `call.json`   | start time, duration, language                            |
+| `errors.log`  | what went wrong while recording or transcribing (only if something did) |
 
 The files are written while recording, so a crash loses at most the last
 moment.
@@ -138,8 +139,10 @@ quiet tone) and `file:/path/to/audio.wav` (played in real time).
 ## Problems
 
 `~/.cache/recall/recall.log` has what happened (previous run:
-`recall.prev.log`); the transcriber writes `transcribe.log`. A failed
-transcript leaves `transcript.failed` with the reason in the call folder. `recall --self-test` checks the installation.
+`recall.prev.log`); the transcriber writes `transcribe.log`. Problems
+with one call (a device that disappeared, skipped subtitles, a failed or
+crashed transcript) are also written to `errors.log` in its folder. A failed
+transcript leaves `transcript.failed` with the reason there. `recall --self-test` checks the installation.
 
 ## Building
 

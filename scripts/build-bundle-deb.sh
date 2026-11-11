@@ -36,6 +36,15 @@ scripts/fetch-vulkan-sdk.sh
 # The binary finds libvosk.so in the bundle.
 RECALL_RPATH=$PREFIX/lib cargo build --release
 
+# whisper.cpp must not be built for this machine's CPU (-march=native): the
+# package would die with SIGILL elsewhere.  GGML_NATIVE=OFF comes from
+# .cargo/config.toml, but an older cached build doesn't notice the change.
+cache=$(ls -t target/release/build/whisper-rs-sys-*/out/build/CMakeCache.txt | head -1)
+grep -q '^GGML_NATIVE:[A-Z]*=OFF$' "$cache" || {
+    echo "whisper.cpp was built with -march=native ($cache): run 'cargo clean --release -p whisper-rs-sys' and build again" >&2
+    exit 1
+}
+
 root=target/bundle/recall_${version}_amd64
 opt=$root$PREFIX
 rm -rf "$root"

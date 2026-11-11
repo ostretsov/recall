@@ -9,6 +9,7 @@
 //!   live.md          the live subtitles as a readable transcript (at stop)
 //!   transcript.md    accurate transcript made by Whisper after the call
 //!   transcript.json  the same with timings, machine-readable
+//!   errors.log       what went wrong while recording or transcribing (only then)
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -27,6 +28,21 @@ pub const TRANSCRIPT_JSON: &str = "transcript.json";
 /// Written when transcribing failed (holds the error), so the call is not
 /// retried at every start.
 pub const TRANSCRIPT_FAILED: &str = "transcript.failed";
+
+/// Problems with this call (recording or transcribing), one timestamped
+/// line each.  Only exists when something went wrong.
+pub const ERRORS_LOG: &str = "errors.log";
+
+/// Appends a problem to the call's `errors.log`.
+pub fn log_error(dir: &Path, time: DateTime<Local>, msg: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut f = std::fs::File::options()
+        .create(true)
+        .append(true)
+        .open(dir.join(ERRORS_LOG))?;
+    let msg = msg.trim_end().replace('\n', "\n    ");
+    writeln!(f, "{} {msg}", time.format("%Y-%m-%d %H:%M:%S"))
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CallInfo {
@@ -104,6 +120,20 @@ mod tests {
         let back: CallInfo = serde_json::from_str(&serde_json::to_string(&info).unwrap()).unwrap();
         assert_eq!(back, info);
         assert_eq!(info.title(), "Call 2026-11-02 14:30");
+    }
+
+    #[test]
+    fn errors_are_appended() {
+        let tmp = tempfile::tempdir().unwrap();
+        let t = Local.with_ymd_and_hms(2026, 11, 2, 14, 30, 5).unwrap();
+        log_error(tmp.path(), t, "pipeline error: no device").unwrap();
+        log_error(tmp.path(), t, "two\nlines\n").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join(ERRORS_LOG)).unwrap(),
+            "2026-11-02 14:30:05 pipeline error: no device\n2026-11-02 14:30:05 two\n    lines\n"
+        );
+        // No folder: an error, not a panic.
+        assert!(log_error(&tmp.path().join("missing"), t, "x").is_err());
     }
 
     #[test]

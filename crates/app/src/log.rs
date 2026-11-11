@@ -4,7 +4,7 @@
 //! `RECALL_DEBUG=1`.
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 static FILE: Mutex<Option<std::fs::File>> = Mutex::new(None);
@@ -59,4 +59,11 @@ pub fn write(msg: &str) {
     if std::env::var_os("RECALL_DEBUG").is_some() {
         eprint!("[recall] {line}");
     }
+}
+
+/// A problem with the call in `dir`: goes to the session log and to the
+/// call's own `errors.log`, so it stays with the recording.
+pub fn call_error(dir: &Path, msg: &str) {
+    write(&format!("{}: {msg}", dir.display()));
+    let _ = recall_core::call::log_error(dir, chrono::Local::now(), msg);
 }

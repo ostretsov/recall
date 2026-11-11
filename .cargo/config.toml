@@ -2,3 +2,11 @@
 # scripts/fetch-vulkan-sdk.sh puts here (glslc, headers, loader).
 [env]
 VULKAN_SDK = { value = "vendor/vulkan-sdk", relative = true }
+
+# whisper.cpp otherwise builds with -march=native: a package built on a
+# machine with AVX-512 (GitHub's runners) then dies with SIGILL on CPUs
+# without it.  With this off ggml uses its portable set: SSE 4.2, AVX,
+# AVX2, FMA, F16C, BMI2 (`transcribe::check_cpu` reports a CPU without them).
+# whisper-rs-sys doesn't watch this variable: after changing it run
+# `cargo clean -p whisper-rs-sys`.
+GGML_NATIVE = "OFF"

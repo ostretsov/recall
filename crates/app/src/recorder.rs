@@ -142,9 +142,10 @@ impl Recorder {
             let pipeline = pipeline.downgrade();
             let stopping = stopping.clone();
             let events = events.clone();
+            let dir = opts.dir.clone();
             std::thread::Builder::new()
                 .name("bus".into())
-                .spawn(move || bus_loop(bus, pipeline, stopping, eos_tx, events))?
+                .spawn(move || bus_loop(bus, pipeline, stopping, eos_tx, events, dir))?
         };
 
         // Start before the recognizer threads pull: an appsink that is not
@@ -153,6 +154,7 @@ impl Recorder {
             stopping.store(true, Ordering::Relaxed);
             let _ = pipeline.set_state(gst::State::Null);
             let _ = bus_thread.join();
+            crate::log::call_error(&opts.dir, &format!("cannot start recording: {e}"));
             bail!("cannot start recording: {e}");
         }
         let mut asr_threads = Vec::new();
@@ -167,6 +169,7 @@ impl Recorder {
                 models_dir: opts.models_dir.clone(),
                 vosk: opts.vosk.clone(),
                 pipeline: pipeline.downgrade(),
+                dir: opts.dir.clone(),
                 events: events.clone(),
                 jsonl: jsonl.clone(),
                 segments: segments.clone(),
@@ -206,7 +209,10 @@ impl Recorder {
         let duration = self.elapsed();
         self.pipeline.send_event(gst::event::Eos::new());
         if self.eos_rx.recv_timeout(Duration::from_secs(5)).is_err() {
-            crate::log::write("stop: no EOS within 5 s; closing anyway");
+            crate::log::call_error(
+                &self.dir,
+                "stop: the recording did not finish within 5 s; closed anyway (the end of the files may be cut)",
+            );
         }
         self.stopping.store(true, Ordering::Relaxed);
         let _ = self.pipeline.set_state(gst::State::Null);
@@ -249,6 +255,7 @@ fn bus_loop(
     stopping: Arc<AtomicBool>,
     eos_tx: mpsc::Sender<()>,
     events: async_channel::Sender<Event>,
+    dir: PathBuf,
 ) {
     while !stopping.load(Ordering::Relaxed) {
         let Some(msg) = bus.timed_pop(gst::ClockTime::from_mseconds(100)) else {
@@ -262,7 +269,7 @@ fn bus_loop(
             MessageView::Error(e) => {
                 let src = e.src().map(|s| s.name().to_string()).unwrap_or_default();
                 let text = format!("{src}: {} ({:?})", e.error(), e.debug());
-                crate::log::write(&format!("pipeline error: {text}"));
+                crate::log::call_error(&dir, &format!("pipeline error: {text}"));
                 let _ =
                     events.send_blocking(Event::Error(user_error(&src, &e.error().to_string())));
                 // Let a stop in progress finish without waiting for EOS.
@@ -357,6 +364,8 @@ struct AsrContext {
     models_dir: PathBuf,
     vosk: VoskCache,
     pipeline: gst::glib::WeakRef<gst::Pipeline>,
+    /// The call's folder (for its `errors.log`).
+    dir: PathBuf,
     events: async_channel::Sender<Event>,
     jsonl: Arc<Mutex<File>>,
     segments: Arc<Mutex<Vec<Segment>>>,
@@ -407,11 +416,14 @@ fn asr_loop(sink: gst_app::AppSink, ctx: AsrContext) {
         {
             if !lagging {
                 lagging = true;
-                crate::log::write(&format!(
-                    "{:?}: recognition {:.1} s behind; skipping audio",
-                    ctx.speaker,
-                    now - pts
-                ));
+                crate::log::call_error(
+                    &ctx.dir,
+                    &format!(
+                        "subtitles {:?}: recognition {:.1} s behind; skipping audio (the recording is complete)",
+                        ctx.speaker,
+                        now - pts
+                    ),
+                );
                 let _ = ctx.events.send_blocking(Event::Warning(
                     "Subtitles are falling behind (the computer is busy); some speech is skipped. The recording itself is complete.".into(),
                 ));
@@ -459,6 +471,9 @@ fn start_recognizer(
 ) -> Option<Live> {
     let mut report = |s: SubtitleStatus| {
         if status.as_ref() != Some(&s) {
+            if let SubtitleStatus::Failed(e) = &s {
+                crate::log::call_error(&ctx.dir, &format!("subtitles {:?}: {e}", ctx.speaker));
+            }
             *status = Some(s.clone());
             let _ = ctx.events.send_blocking(Event::Subtitles {
                 speaker: ctx.speaker,
@@ -473,7 +488,6 @@ fn start_recognizer(
             return None;
         }
         Err(e) => {
-            crate::log::write(&format!("{e:#}"));
             report(SubtitleStatus::Failed(format!("{e:#}")));
             return None;
         }

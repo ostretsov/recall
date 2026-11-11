@@ -148,6 +148,23 @@ impl ChildLine {
     }
 }
 
+/// What to tell the user when the transcriber child was killed by `signal`.
+pub fn crash_message(signal: i32) -> String {
+    let (name, hint) = match signal {
+        4 => (
+            "SIGILL",
+            ": this build uses processor instructions this computer doesn't have",
+        ),
+        6 => ("SIGABRT", ""),
+        7 => ("SIGBUS", ""),
+        8 => ("SIGFPE", ""),
+        11 => ("SIGSEGV", ""),
+        15 => return "the transcriber was stopped (SIGTERM)".into(),
+        n => return format!("the transcriber crashed (signal {n})"),
+    };
+    format!("the transcriber crashed ({name}){hint}")
+}
+
 /// Text Whisper is known to invent for silence or noise (learned from
 /// subtitled videos).  A segment consisting only of one of these is dropped.
 const HALLUCINATIONS: &[&str] = &[
@@ -189,6 +206,14 @@ pub fn clean_text(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn crash_messages() {
+        assert_eq!(crash_message(11), "the transcriber crashed (SIGSEGV)");
+        assert!(crash_message(4).contains("SIGILL"));
+        assert!(crash_message(4).contains("instructions"));
+        assert_eq!(crash_message(31), "the transcriber crashed (signal 31)");
+    }
 
     #[test]
     fn models() {

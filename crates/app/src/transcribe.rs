@@ -77,16 +77,44 @@ pub fn run(dir: &Path, settings: &Settings, progress: Progress) -> anyhow::Resul
             t.segments.len()
         )),
         Err(e) => {
-            crate::log::write(&format!("transcribing {} failed: {e:#}", dir.display()));
+            crate::log::call_error(dir, &format!("transcribing failed: {e:#}"));
             let _ = std::fs::write(dir.join(call::TRANSCRIPT_FAILED), format!("{e:#}\n"));
         }
     }
     result
 }
 
+/// whisper.cpp is compiled for CPUs with AVX2 and friends (see
+/// `.cargo/config.toml`); on an older one it would die with SIGILL.
+fn check_cpu() -> anyhow::Result<()> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        let missing: Vec<&str> = [
+            ("SSE 4.2", is_x86_feature_detected!("sse4.2")),
+            ("AVX", is_x86_feature_detected!("avx")),
+            ("AVX2", is_x86_feature_detected!("avx2")),
+            ("FMA", is_x86_feature_detected!("fma")),
+            ("F16C", is_x86_feature_detected!("f16c")),
+            ("BMI2", is_x86_feature_detected!("bmi2")),
+        ]
+        .into_iter()
+        .filter(|(_, has)| !has)
+        .map(|(name, _)| name)
+        .collect();
+        if !missing.is_empty() {
+            bail!(
+                "this processor is too old for Whisper transcripts (no {})",
+                missing.join(", ")
+            );
+        }
+    }
+    Ok(())
+}
+
 fn transcribe(dir: &Path, settings: &Settings, progress: Progress) -> anyhow::Result<Transcript> {
     lower_priority();
     init_logging();
+    check_cpu()?;
     let info = read_info(dir).context("reading call.json")?;
     let gpu = if settings.gpu { pick_gpu() } else { None };
     let model = settings.model.resolve(gpu.is_some());

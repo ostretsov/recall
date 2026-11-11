@@ -88,11 +88,11 @@ pub fn spawn(
             }
             let status = child.wait();
             // Killed by a signal we didn't send (we use SIGKILL to cancel).
-            let crashed = status
-                .as_ref()
-                .ok()
-                .and_then(|s| s.signal())
-                .is_some_and(|sig| sig != libc::SIGKILL);
+            let signal = status.as_ref().ok().and_then(|s| s.signal());
+            let crashed = signal.is_some_and(|sig| sig != libc::SIGKILL);
+            if let (true, Some(sig)) = (crashed, signal) {
+                result = Err(recall_core::whisper::crash_message(sig));
+            }
             crate::log::write(&format!(
                 "transcriber for {} exited: {status:?}",
                 d.display()
