@@ -22,11 +22,11 @@ Planned: video recording of the call window.
 
 ## Install
 
-Download `recall_0.4.0_amd64.deb` from the
+Download `recall_0.4.1_amd64.deb` from the
 [releases](../../releases) and install it:
 
 ```sh
-sudo apt install ./recall_0.4.0_amd64.deb
+sudo apt install ./recall_0.4.1_amd64.deb
 ```
 
 It is self-contained (GTK 4, GStreamer, Vosk and whisper.cpp are bundled
