@@ -31,6 +31,10 @@ pub enum Command {
     Autostart {
         enabled: bool,
     },
+    /// Opens or closes the settings popover (like the gear button).
+    Settings {
+        open: bool,
+    },
     /// (Re)make the Whisper transcript of a call folder (default: the
     /// current/last call).
     Transcribe {
@@ -95,6 +99,9 @@ pub struct State {
     /// The "start at login" setting.
     #[serde(default)]
     pub autostart: bool,
+    /// The settings popover is open.
+    #[serde(default)]
+    pub settings_open: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -168,6 +175,10 @@ mod tests {
             Ok(Command::OutputDir {
                 dir: "/tmp/calls".into()
             })
+        );
+        assert_eq!(
+            Command::parse(r#"{"cmd":"settings","open":true}"#),
+            Ok(Command::Settings { open: true })
         );
         assert_eq!(
             Command::parse(r#"{"cmd":"autostart","enabled":true}"#),

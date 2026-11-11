@@ -146,6 +146,8 @@ struct St {
     cpu_only: HashSet<PathBuf>,
     /// The last finished transcript.
     last_transcript: Option<PathBuf>,
+    /// The call whose transcript failed last (the "Try again" button).
+    failed_job: Option<PathBuf>,
 }
 
 struct App {
@@ -171,6 +173,7 @@ struct App {
     job_label: gtk::Label,
     job_bar: gtk::ProgressBar,
     job_open: gtk::Button,
+    job_retry: gtk::Button,
     updater: crate::update::Updater,
     tray: RefCell<Option<crate::tray::Tray>>,
     jobs_tx: async_channel::Sender<JobEvent>,
@@ -346,7 +349,10 @@ impl App {
         job_open.set_tooltip_text(Some("The call's folder: transcript and recordings"));
         job_row.append(&job_label);
         job_row.append(&job_bar);
+        let job_retry = gtk::Button::with_label("Try again");
+        job_retry.set_tooltip_text(Some("Make the transcript of this call again"));
         job_row.append(&job_open);
+        job_row.append(&job_retry);
         job_row.set_visible(false);
         vbox.append(&job_row);
         let footer = gtk::Label::new(None);
@@ -381,6 +387,7 @@ impl App {
             job_label,
             job_bar,
             job_open: job_open.clone(),
+            job_retry: job_retry.clone(),
             updater,
             tray: RefCell::new(None),
             jobs_tx,
@@ -409,6 +416,7 @@ impl App {
                 job_progress: 0.0,
                 cpu_only: HashSet::new(),
                 last_transcript: None,
+                failed_job: None,
             }),
         });
         let a = app.clone();
@@ -422,6 +430,19 @@ impl App {
                 a.open_path(&dir);
             }
         });
+        let a = app.clone();
+        job_retry.connect_clicked(move |_| {
+            let dir = a.st.borrow().failed_job.clone();
+            if let Some(dir) = dir
+                && let Err(e) = a.retranscribe(&dir)
+            {
+                a.set_status(&e, true);
+            }
+        });
+        let a = app.clone();
+        app.settings
+            .retranscribe
+            .connect_clicked(move |_| a.choose_call_to_transcribe());
         let a = app.clone();
         glib::spawn_future_local(async move {
             while let Ok(ev) = jobs_rx.recv().await {
@@ -441,6 +462,24 @@ impl App {
         banner_button.connect_clicked(move |_| a.download_model());
         let a = app.clone();
         app.settings.open.connect_clicked(move |_| a.open_folder());
+        // A click inside the window closes the popover by itself (autohide);
+        // a click on another window or the desktop doesn't reach GTK, but
+        // the window stops being the active one.  Opening the popover also
+        // makes it inactive for a moment (the grab), hence the delay.
+        let button = app.settings.button.clone();
+        app.window.connect_is_active_notify(move |w| {
+            if w.is_active() {
+                return;
+            }
+            let (w, button) = (w.clone(), button.clone());
+            glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || {
+                let open = button.popover().is_some_and(|p| p.is_visible());
+                if !w.is_active() && open {
+                    crate::log::write("window lost focus: settings closed");
+                    button.popdown();
+                }
+            });
+        });
         let a = app.clone();
         app.settings.smaller.connect_clicked(move |_| a.zoom(-1.0));
         let a = app.clone();
@@ -1268,6 +1307,55 @@ impl App {
 
     // --- Transcripts -----------------------------------------------------
 
+    /// Makes the transcript of the call in `dir` (again): after a failure,
+    /// or to replace an existing one.
+    fn retranscribe(self: &Rc<Self>, dir: &Path) -> Result<(), String> {
+        if !dir.join(call::INFO_FILE).exists() {
+            return Err(format!(
+                "no such call folder: {} (no {})",
+                dir.display(),
+                call::INFO_FILE
+            ));
+        }
+        let _ = std::fs::remove_file(dir.join(call::TRANSCRIPT_FAILED));
+        // The graphics card gets another chance too.
+        self.st.borrow_mut().cpu_only.remove(dir);
+        self.show_job(
+            &format!("Transcript waiting: {}", folder_name(dir)),
+            None,
+            false,
+        );
+        self.enqueue(dir.to_path_buf());
+        Ok(())
+    }
+
+    /// Asks for a call folder and makes its transcript again.
+    fn choose_call_to_transcribe(self: &Rc<Self>) {
+        #[allow(deprecated)]
+        let chooser = gtk::FileChooserNative::new(
+            Some("Transcribe again: choose the call's folder"),
+            Some(&self.window),
+            gtk::FileChooserAction::SelectFolder,
+            Some("Transcribe"),
+            None,
+        );
+        #[allow(deprecated)]
+        {
+            let _ = chooser.set_current_folder(Some(&gio::File::for_path(self.output_dir())));
+            let a = self.clone();
+            chooser.connect_response(move |c, resp| {
+                if resp == gtk::ResponseType::Accept
+                    && let Some(dir) = c.file().and_then(|f| f.path())
+                    && let Err(e) = a.retranscribe(&dir)
+                {
+                    a.set_status(&e, true);
+                }
+                c.destroy();
+            });
+            chooser.show();
+        }
+    }
+
     fn enqueue(self: &Rc<Self>, dir: PathBuf) {
         {
             let mut st = self.st.borrow_mut();
@@ -1414,6 +1502,8 @@ impl App {
                             None,
                             false,
                         );
+                        self.job_retry.set_visible(true);
+                        self.st.borrow_mut().failed_job = Some(dir);
                     }
                 }
                 self.pump();
@@ -1429,6 +1519,7 @@ impl App {
             self.job_bar.set_fraction(p);
         }
         self.job_open.set_visible(can_open);
+        self.job_retry.set_visible(false);
     }
 
     fn open_path(&self, path: &Path) {
@@ -1526,6 +1617,11 @@ impl App {
             window_visible: self.window.is_visible(),
             output_dir: self.output_dir().display().to_string(),
             autostart: st.config.autostart,
+            settings_open: self
+                .settings
+                .button
+                .popover()
+                .is_some_and(|p| p.is_visible()),
         }
     }
 
@@ -1560,15 +1656,23 @@ impl App {
                 }
             }
             Command::Autostart { enabled } => self.settings.autostart.set_active(enabled),
+            Command::Settings { open } => {
+                if open {
+                    self.settings.button.popup();
+                } else {
+                    self.settings.button.popdown();
+                }
+            }
             Command::Transcribe { dir } => {
                 let dir = dir
                     .map(PathBuf::from)
                     .or_else(|| self.st.borrow().call_dir.clone());
-                let Some(dir) = dir.filter(|d| d.join(call::INFO_FILE).exists()) else {
+                let Some(dir) = dir else {
                     return Reply::error("no such call folder");
                 };
-                let _ = std::fs::remove_file(dir.join(call::TRANSCRIPT_FAILED));
-                self.enqueue(dir);
+                if let Err(e) = self.retranscribe(&dir) {
+                    return Reply::error(e);
+                }
             }
             Command::CheckUpdate => self.updater.check(true),
             Command::Quit => self.quit(),
@@ -1591,6 +1695,7 @@ struct Settings {
     folder: gtk::Button,
     folder_label: gtk::Label,
     open: gtk::Button,
+    retranscribe: gtk::Button,
     autostart: gtk::Switch,
 }
 
@@ -1654,9 +1759,30 @@ impl Settings {
         let open = gtk::Button::with_label("Open recordings folder");
         open.set_margin_top(4);
         grid.attach(&open, 0, row, 2, 1);
+        let retranscribe = gtk::Button::with_label("Transcribe a call again…");
+        retranscribe.set_tooltip_text(Some(
+            "Choose a call's folder to make its transcript again, for example after it failed",
+        ));
+        grid.attach(&retranscribe, 0, row + 1, 2, 1);
 
         let popover = gtk::Popover::new();
         popover.set_child(Some(&grid));
+        // On X11 a click outside the app (another window, the desktop)
+        // arrives here because of the popover's pointer grab, with a
+        // position outside the popover; GTK itself only closes it for
+        // clicks inside the app's window.
+        let outside = gtk::GestureClick::new();
+        outside.set_button(0);
+        outside.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let p = popover.clone();
+        outside.connect_pressed(move |g, _, x, y| {
+            // Not clicks in the language list, which is a popover of its own.
+            let ours = g.current_event().and_then(|e| e.surface()) == p.surface();
+            if ours && !p.contains(x, y) {
+                p.popdown();
+            }
+        });
+        popover.add_controller(outside);
         let button = gtk::MenuButton::builder()
             .icon_name("emblem-system-symbolic")
             .tooltip_text("Settings")
@@ -1671,6 +1797,7 @@ impl Settings {
             folder,
             folder_label,
             open,
+            retranscribe,
             autostart,
         };
         s.show_font_size(config::font_size(config.font_size));

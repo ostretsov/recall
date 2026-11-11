@@ -142,7 +142,9 @@ quiet tone) and `file:/path/to/audio.wav` (played in real time).
 `recall.prev.log`); the transcriber writes `transcribe.log`. Problems
 with one call (a device that disappeared, skipped subtitles, a failed or
 crashed transcript) are also written to `errors.log` in its folder. A failed
-transcript leaves `transcript.failed` with the reason there. `recall --self-test` checks the installation.
+transcript leaves `transcript.failed` with the reason there; "Try again"
+next to the message, or Settings → "Transcribe a call again…" (any call
+folder), makes it again. `recall --self-test` checks the installation.
 
 ## Building
 
@@ -171,6 +173,7 @@ recall --ctl /tmp/r.sock '{"cmd":"language","language":"es"}'
 recall --ctl /tmp/r.sock '{"cmd":"font_size","size":18}'
 recall --ctl /tmp/r.sock '{"cmd":"output_dir","dir":"/abs/path"}'
 recall --ctl /tmp/r.sock '{"cmd":"autostart","enabled":true}'
+recall --ctl /tmp/r.sock '{"cmd":"settings","open":true}'   # the settings popover
 recall --ctl /tmp/r.sock '{"cmd":"transcribe"}'  # (again) for the last call, or "dir":"…"
 recall --ctl /tmp/r.sock '{"cmd":"check_update"}' # look for a newer release now; the state's "update" is the bar's text
 recall --ctl /tmp/r.sock '{"cmd":"close"}'     # the window's close button; "show" brings it back
